@@ -1,79 +1,132 @@
-# Quantum-random-number-generator-for-cryptography
+# Quantum Random Number Generator (QRNG)
+
+True randomness from quantum measurement indeterminacy, using PennyLane.
+
+## Quick Start
+
+```bash
+pip install pennylane scipy numpy
+python main.py --quick          # fast demo (~30 seconds)
+python main.py --bits 100000    # full NIST suite
+```
+
+## Project Structure
+
+```
+qrng/
+├── main.py                   ← Run this
+├── requirements.txt
+├── core/
+│   ├── qrng.py               ← Quantum circuit + QRNG class
+│   └── extractors.py         ← Von Neumann + Toeplitz extractors
+├── tests/
+│   └── nist_tests.py         ← NIST SP 800-22 statistical tests
+└── crypto/
+    └── keygen.py             ← AES key gen + quantum vs classical comparison
+```
+
+## Mathematical Foundation
+
+### Why quantum measurement is fundamentally random
+
+A qubit in superposition has no definite value before measurement.
+This is not epistemic uncertainty (we don't know it yet) — it is
+ontic indeterminacy (there is no fact of the matter).
+
+Bell's theorem (1964) and the Kochen-Specker theorem (1967) together
+rule out hidden variable theories: no pre-determined values exist that
+could predict measurement outcomes. The randomness is real.
+
+### The circuit
+
+```
+|0⟩ ──[ H ]──[ Rz(θ) ]──[ H ]──┤M├→ bit
+```
+
+- `H` (Hadamard): takes |0⟩ to (|0⟩+|1⟩)/√2
+- `Rz(θ)`: phase rotation — changes interference pattern
+- `M`: projective measurement, collapses superposition
+
+### Key equations
+
+Hadamard gate:
+```
+H = (1/√2) [[1, 1], [1, -1]]
+H|0⟩ = (1/√2)(|0⟩ + |1⟩)
+```
+
+Density matrix of superposition (has off-diagonal coherences):
+```
+ρ = |ψ⟩⟨ψ| = (1/2)[[1, 1], [1, 1]]
+```
+
+Born rule (measurement probabilities):
+```
+P(0) = Tr(|0⟩⟨0| · ρ) = 1/2
+P(1) = Tr(|1⟩⟨1| · ρ) = 1/2
+```
+
+Von Neumann extractor (debiasing):
+```
+Input pairs: (0,1)→0    (1,0)→1    (0,0)→discard    (1,1)→discard
+P(output 0) = p(1-p) / [2p(1-p)] = 1/2  ✓ (unbiased regardless of p)
+```
+
+Toeplitz extractor (Leftover Hash Lemma):
+```
+y = T·x mod 2   where T is an m×n matrix over GF(2)
+If min-entropy(x) ≥ m + 2·security_param:
+    ||P_y - Uniform||_1 ≤ 2^{-security_param}
+```
+
+## Connecting to Real IBM Quantum Hardware
+
 ```python
-readme_content = """# True Quantum Random Number Generator (QRNG) Pipeline
+import os
+from core.qrng import QRNG, QRNGConfig
 
-## Overview
-This project bridges quantum mechanics and classical cryptography by generating true, non-deterministic random numbers. Unlike classical Pseudo-Random Number Generators (PRNGs) like the Mersenne Twister, this pipeline uses the superposition collapse of a qubit to extract physical entropy. 
-
-Because real quantum hardware is noisy and biased, this pipeline includes mathematical post-processing (Randomness Extractors) to produce perfectly uniform, mathematically secure bitstreams that pass the NIST Statistical Test Suite.
-
-## Pipeline Architecture
-1. **Entropy Source (Quantum Hardware):** Uses Qiskit to run a single-qubit Hadamard superposition circuit on an IBM Quantum backend.
-2. **Min-Entropy Estimation:** Evaluates the raw hardware bias (e.g., T1 relaxation favoring `0` states).
-3. **Randomness Extractor:** Squeezes hardware bias out of the raw bitstream using either a **Von Neumann Extractor** (simple, low yield) or a **Toeplitz Matrix Extractor** (strong extraction via Galois Field 2 arithmetic).
-4. **NIST Validation:** Runs the extracted stream through the NIST SP 800-22 statistical tests to ensure cryptographic uniformity.
-5. **Cryptographic Sink:** Feeds the certified entropy into an HKDF to generate a secure AES-256 key.
-
-## Tech Stack
-* **Quantum Backend:** `qiskit`, `qiskit-ibm-runtime`
-* **Math & Post-Processing:** `numpy`, `galois` (for GF(2) matrix multiplication)
-* **Benchmarking:** `nistrng` 
-* **Cryptography:** `cryptography`
-
-## Installation
-
+cfg = QRNGConfig(
+    backend   = "ibm",
+    ibm_token = os.environ["IBMQ_TOKEN"],   # from quantum.ibm.com
+    n_qubits  = 5,     # stay small — real hardware has more noise
+    n_shots   = 1024,
+)
+rng = QRNG(cfg)
+bits = rng.generate_bits(1000)
 ```
 
-```text
-README.md generated successfully.
+Get a free IBM Quantum account at https://quantum.ibm.com
 
-```bash
-git clone [https://github.com/yourusername/qrng-pipeline.git](https://github.com/yourusername/qrng-pipeline.git)
-cd qrng-pipeline
-pip install -r requirements.txt
+## NIST Test Descriptions
 
-```
+| Test | What it checks |
+|------|---------------|
+| Frequency (Monobit) | Equal number of 0s and 1s overall |
+| Block Frequency | Equal 0/1 ratio within every M-bit block |
+| Runs | Number of consecutive-identical-bit runs is correct |
+| Longest Run | Longest run of 1s matches expected distribution |
+| Serial (m=2) | All 2-bit patterns (00,01,10,11) appear equally |
+| Serial (m=3) | All 3-bit patterns appear equally |
 
-## Configuration
+Pass criterion for each: p-value ≥ 0.01
 
-To run on physical hardware (rather than a local CPU simulator), you need an IBM Quantum API token.
+## Extending This Project
 
-1. Create a free account at [IBM Quantum Platform](https://quantum.ibm.com/).
-2. Copy your API token from the dashboard.
-3. Export it as an environment variable (or add it to a `.env` file):
-```bash
-export IBM_QUANTUM_TOKEN="your_api_token_here"
+1. **Implement the remaining 9 NIST tests** (see NIST SP 800-22 PDF, free online)
+2. **Add noise simulation**: replace `default.qubit` with `default.mixed`
+   and add `qml.DepolarizingChannel(p=0.01, wires=i)` after each gate
+3. **Benchmark on real IBM hardware**: compare bias p before/after extraction
+4. **Quantum advantage proof**: show that after running a seeded PRNG for
+   N steps, an adversary can predict all future bits; show the QRNG output
+   cannot be predicted even with full knowledge of the circuit
 
-```
+## Why this project matters
 
+Every AES key, TLS session, RSA prime test, and ECDH exchange begins with
+a random number.  Classical PRNGs are deterministic.  OS CSPRNGs harvest
+physical entropy (timing jitter, interrupt latency) which can be influenced
+by a sophisticated attacker who controls the hardware environment.
 
-
-## Usage
-
-**Step 1: Generate Raw Entropy**
-Execute the quantum circuit to collect raw, biased measurements.
-
-```bash
-python src/1_generate_raw_bits.py --shots 20000 --backend hardware
-
-```
-
-**Step 2: Post-Processing**
-Debias the raw measurements to achieve a perfect 50/50 distribution.
-
-```bash
-python src/2_extractor.py --method toeplitz --input raw_bits.json --output extracted_bits.bin
-
-```
-
-**Step 3: Cryptographic Key Generation**
-Validate the uniformity of the bits and derive a secure AES encryption key.
-
-```bash
-python src/3_derive_keys.py --input extracted_bits.bin
-
-```
-
-## Disclaimer
-
-This is an educational project demonstrating quantum mechanics and cryptographic post-processing. While the quantum randomness is true, do not use this pipeline in a production environment for securing highly sensitive real-world assets without proper hardware auditing and physical security protocols.
+Quantum measurement entropy cannot be influenced or predicted — not even
+by the device manufacturer.  This is the eventual foundation of post-quantum
+cryptographic key generation.
