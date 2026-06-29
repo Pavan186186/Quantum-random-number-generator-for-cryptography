@@ -24,7 +24,6 @@ qrng/
 └── crypto/
     └── keygen.py             ← AES key gen + quantum vs classical comparison
 ```
-
 ## Mathematical Foundation
 
 ### Why quantum measurement is fundamentally random
